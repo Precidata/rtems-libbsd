@@ -192,10 +192,14 @@ RTEMS_BSD_DRIVER_USB_MASS;
 
 #include <stm32h7xx.h>
 
-#if !defined(STM32H7_SLAVE_BSP)
+#if !defined(STM32H7_SLAVE_BSP) || defined(STM32H7_SLAVE_BSP_HW_ETH)
 
 RTEMS_BSD_DEFINE_NEXUS_DEVICE(stmac, 0, 0, NULL);
 SYSINIT_DRIVER_REFERENCE(ukphy, miibus);
+
+#endif
+
+#if !defined(STM32H7_SLAVE_BSP)
 
 static const rtems_bsd_device_resource dwcotg_res[] = {
 	{
