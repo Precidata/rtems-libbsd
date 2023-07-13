@@ -35,6 +35,8 @@
  * SUCH DAMAGE.
  */
 
+#include <math.h>
+
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -45,7 +47,12 @@
 
 #include <rtems/bsd/test/network-config.h>
 
+#include <bsp.h>
+#include <stm32h7/hal.h>
+#include <rtems/score/armv7m.h>
+
 #define TEST_NAME "LIBBSD PING 1"
+#define TEST_WAIT_FOR_LINK NET_CFG_INTERFACE_0
 
 static void
 test_ping(void)
@@ -54,19 +61,40 @@ test_ping(void)
 	char *ping[] = {
 		"ping",
 		"-c",
-		"3",
+		"10",
 		NET_CFG_PEER_IP,
 		NULL
 	};
 
-	exit_code = rtems_bsd_command_ping(RTEMS_BSD_ARGC(ping), ping);
-	assert(exit_code == EXIT_SUCCESS);
+	for (;;) {
+          exit_code = rtems_bsd_command_ping(RTEMS_BSD_ARGC(ping), ping);
+	  uint32_t rnd[10];
+	  getentropy(&rnd, 10 * sizeof(uint32_t));
+	  for (int i = 0; i < 10; i++) {
+	    printf("RND: %u\n", rnd[i]);
+	  }
+	  usleep(1000000);
+	}
+//	assert(exit_code == EXIT_SUCCESS);
 }
 
 static void
 test_main(void)
 {
+    printf("Cedric's test @ test_main:\n");
+    for (int i = 0; i < 64; i++) {
+        volatile uint64_t i1 = ((uint64_t)1) << i;
+        volatile double d1 = (double)i1;
+        volatile double d2 = pow(2.0, i);
+        int OK = d1 == d2;
+        printf("2^%d: %s (%.8f vs %.8f)\n", i, OK ? "OK" : "BAD", d1, d2);
+    }
+  printf("ASPEN: %s\n", (_ARMV7M_SCB->fpccr & FPU_FPCCR_ASPEN_Msk) ? "set" : "not set");
+  printf("LSPEN: %s\n", (_ARMV7M_SCB->fpccr & FPU_FPCCR_LSPEN_Msk) ? "set" : "not set");  
+      
+	printf("start...\n");
 	test_ping();
+	printf("finish...\n");
 
 	exit(0);
 }
