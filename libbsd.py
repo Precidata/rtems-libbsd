@@ -48,6 +48,7 @@ _defaults = {
     # Compile flags
     #
     'common-flags': ['-g',
+                     '-gz',
                      '-fno-strict-aliasing',
                      '-ffreestanding',
                      '-fno-common'],
