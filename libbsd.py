@@ -250,6 +250,7 @@ class rtems(builder.Module):
                 'sys/dev/mmc/st-sdmmc-config.c',
                 'sys/dev/smc/if_smc_nexus.c',
                 'sys/dev/stmac/if_stmac.c',
+                'sys/dev/slnet/if_slnet.c',
                 'sys/dev/tsec/if_tsec_nexus.c',
                 'sys/dev/usb/controller/ehci_mpc83xx.c',
                 'sys/dev/usb/controller/dwc_otg_nexus.c',
