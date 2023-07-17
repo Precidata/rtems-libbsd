@@ -199,6 +199,10 @@ sysinit_add(struct sysinit **set, struct sysinit **set_end)
 	newsysinit_end = newset + count;
 }
 #else /* __rtems__ */
+
+#ifdef VERBOSE_SYSINIT
+int	verbose_sysinit = VERBOSE_SYSINIT;
+#endif
 #ifdef BOOTVERBOSE
 int	bootverbose = 1;
 SYSCTL_INT(_debug, OID_AUTO, bootverbose, CTLFLAG_RW, &bootverbose, 0,
