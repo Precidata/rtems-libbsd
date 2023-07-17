@@ -65,18 +65,18 @@ MALLOC_DEFINE(M_SLNET, "slnet", "Storage for mbuf bookkeeping");
 #define	SLNET_UNLOCK(sc) mtx_unlock(&(sc)->mtx)
 
 struct slnet_softc {
-    uint8_t		  mac_addr[6];
-    struct ifnet	 *ifp;
-    struct ifmedia	  media;		/* Media config (fake). */
-    struct mtx		  mtx;
-    struct callout	  tick_callout;
-    int			  iid;
-    bios_virtual_eth 	 *veth;
-    bios_pkt_queue	 *outq;
-    int			  outsz;
-    struct mbuf		**outmtab;
-    bios_pkt_queue	 *inq;
-    int			  insz;
+	uint8_t			  mac_addr[6];
+	struct ifnet		 *ifp;
+	struct ifmedia		  media;		/* Media config (fake). */
+	struct mtx		  mtx;
+	struct callout		  tick_callout;
+	int			  iid;
+	bios_virtual_eth 	 *veth;
+	bios_pkt_queue	 	 *outq;
+	int			  outsz;
+	struct mbuf		**outmtab;
+	bios_pkt_queue	 	 *inq;
+	int			  insz;
 };
 
 static void
@@ -100,6 +100,20 @@ slnet_init(void *arg)
 static void
 slnet_qflush(struct ifnet *ifp)
 {
+}
+
+static void
+slnet_cache_flush(uintptr_t begin, uintptr_t size)
+{
+	uintptr_t end;
+	uintptr_t mask;
+
+	/* Align begin and end of the data to a cache line */
+	end = begin + size;
+	mask = CPU_CACHE_LINE_BYTES - 1;
+	begin &= ~mask;
+	end = (end + mask) & ~mask;
+	rtems_cache_flush_multiple_data_lines((void *)begin, end - begin);
 }
 
 static int
@@ -142,13 +156,17 @@ slnet_transmit(struct ifnet *ifp, struct mbuf *m0)
 		printf("slnet/tx: outq full (%d/%d)\n", used, sc->outsz);
 		goto _enobufs;
 	}
+	slnet_cache_flush((intptr_t)m0->m_data, m0->m_len);
 	outq->pkts[tail & mask].buf = m0->m_data;
 	outq->pkts[tail & mask].size = m0->m_len;
 	sc->outmtab[tail & mask] = m0;
 	BIOS_DSB();
 	BIOS_ISB();
 	*outq->tail = tail + 1;
-	printf("slnet/tx (%d, n = %d/%d, m = %d): enqueue %d\n", sc->iid, tot, MHLEN, nb, tail);
+	printf("slnet/tx (%d, n = %d/%d): slot %d, 0x%08x+%d\n", sc->iid, tot, MHLEN, tail, m0->m_data, m0->m_len);
+	for (int i = 0; i < 40; i += 4)
+	    printf(" 0x%08x", *(uint32_t*)(i + (intptr_t)m0->m_data));
+	printf("\n");
 	return (0);
 
 _enobufs:
