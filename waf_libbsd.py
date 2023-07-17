@@ -191,6 +191,7 @@ class Builder(builder.ModuleManager):
         _add_flags_if_not_present(conf.env.CFLAGS, section_flags)
         _add_flags_if_not_present(conf.env.CXXFLAGS, section_flags)
         _add_flags_if_not_present(conf.env.LINKFLAGS, ["-Wl,--gc-sections"])
+        _add_flags_if_not_present(conf.env.LINKFLAGS, ["-gz=zlib"])
 
     def build(self, bld):
         #
