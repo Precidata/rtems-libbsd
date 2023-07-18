@@ -68,11 +68,6 @@ test_ping(void)
 
 	for (;;) {
           exit_code = rtems_bsd_command_ping(RTEMS_BSD_ARGC(ping), ping);
-	  uint32_t rnd[10];
-	  getentropy(&rnd, 10 * sizeof(uint32_t));
-	  for (int i = 0; i < 10; i++) {
-	    printf("RND: %u\n", rnd[i]);
-	  }
 	  usleep(1000000);
 	}
 //	assert(exit_code == EXIT_SUCCESS);
