@@ -136,7 +136,7 @@ slnet_tick(void *arg)
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
-	callout_reset(&sc->tick_callout, hz/10, slnet_tick, sc);
+	callout_reset(&sc->tick_callout, 1, slnet_tick, sc);
 	while(slnet_do_receive(ifp, sc))
 	    ;
 }
@@ -147,7 +147,7 @@ slnet_init(void *arg)
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
-	callout_reset(&sc->tick_callout, hz/10, slnet_tick, sc);
+	callout_reset(&sc->tick_callout, 1, slnet_tick, sc);
 }
 
 static void
