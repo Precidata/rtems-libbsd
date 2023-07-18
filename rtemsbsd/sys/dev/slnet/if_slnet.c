@@ -74,12 +74,71 @@ struct slnet_softc {
 };
 
 static void
+do_print_packet(uint8_t *buf, size_t len) {
+	for (int i = 0; i < MIN(len, 42); i++) {
+		switch(i) {
+		case 0:
+		case 6:
+		case 12:
+		case 14:
+		case 34:
+			printf(" ");
+		}
+		printf("%02x", *(uint8_t*)(i + (intptr_t)buf));
+	}
+	printf("\n");
+}
+
+static bool
+slnet_do_receive(struct ifnet *ifp, struct slnet_softc *sc)
+{
+	bios_virtual_eth *veth = sc->veth;
+	bios_pkt_queue *inq = sc->inq;
+	uint32_t qhead = *inq->head;
+	uint32_t qtail = *inq->tail;
+	uint32_t qused = qtail - qhead;
+	uint32_t qsize = inq->size ;
+	uint32_t qmask = qsize - 1;
+	
+	printf("bios/rx%d: no packet\n");
+	if (qused <= 0)
+		return (false);
+	BSD_ASSERT(qused <= qsize);
+	bios_pkt_entry *pkt = inq->pkts + (qhead & qmask);
+	if (pkt->buf == NULL || pkt->size < 14 + 20 ||  pkt->size > 1518) {
+		printf("bios/rx%d: bad packet\n", sc->iid);
+		goto _advance;
+	}
+
+	printf("slnet/rx%d: slot %d, 0x%08x + %d\n", sc->iid, qhead, pkt->buf, pkt->size);
+	do_print_packet(pkt->buf, pkt->size);
+
+	struct mbuf *m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
+	if (m != NULL) {
+		m->m_data = mtod(m, char *) + ETHER_ALIGN;
+		m->m_len = pkt->size;
+		m->m_pkthdr.rcvif = ifp;
+		m->m_pkthdr.len = pkt->size;
+		m_copyback(m, 0, pkt->size, pkt->buf);
+		//memcpy(m->m_data, pkt->buf, pkt->size);
+		(*ifp->if_input)(ifp, m);
+	} else
+		if_inc_counter(ifp, IFCOUNTER_IQDROPS, 1);
+
+_advance:
+	*inq->head = qhead + 1;
+	return (true);
+}
+
+static void
 slnet_tick(void *arg)
 {
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
 	callout_reset(&sc->tick_callout, hz, slnet_tick, sc);
+	while(slnet_do_receive(ifp, sc))
+	    ;
 }
 
 static void
@@ -104,7 +163,8 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	uint32_t ohead = sc->ohead;
 	uint32_t otail = sc->otail;
 
-	int mlen = m_length(m, NULL);
+	unsigned mlen = m_length(m, NULL);
+	unsigned amlen = (mlen + 3) & ~3;
 	if (mlen < sizeof(struct ether_header) + 20) {
 		printf("slnet/tx%d: mbuf too small (%d)\n", sc->iid, mlen);
 		return (ENOBUFS);
@@ -113,23 +173,23 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 		printf("slnet/tx%d: mbuf too big (%d)\n", sc->iid, mlen);
 		return (ENOBUFS);
 	}
-	int oused = otail - ohead;
+	unsigned oused = otail - ohead;
 	BSD_ASSERT(oused <= SNLET_BUFSIZE);
-	if (mlen > SNLET_BUFSIZE - oused) {
+	if (amlen > SNLET_BUFSIZE - oused) {
 		printf("slnet/tx%d: no space in obuf (%d > %d)\n", sc->iid, mlen, SNLET_BUFSIZE - oused);
 		return (ENOBUFS);
 	}
-	int ph = ohead & SNLET_BUFMASK;
-	int pt = otail & SNLET_BUFMASK;
+	unsigned ph = ohead & SNLET_BUFMASK;
+	unsigned pt = otail & SNLET_BUFMASK;
 	if ((ph > pt) ||			/* one contiguous area in the middle */
-	    (SNLET_BUFSIZE - pt >= mlen))	/* enough space at end of split buffer */
+	    (SNLET_BUFSIZE - pt >= amlen))	/* enough space at end of split buffer */
 	{
 		p = sc->obuf + pt;
-		otail += mlen;
+		otail += amlen;
 	} else if (ph >= mlen) {		/* enough space at beginning of split buffer */
 		p = sc->obuf;
 		otail += (SNLET_BUFSIZE - pt);	/* skip past of end of split buffer */
-		otail += mlen;
+		otail += amlen;
 	} else {				/* no contigous area big enough available */
 		printf("slnet/tx%d: no contigous area in obuf (%d)\n", sc->iid, mlen);
 		return (ENOBUFS);
@@ -142,7 +202,7 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	uint32_t qused = qtail - qhead;
 	uint32_t qmask = outq->size - 1;
 	if (qused == outq->size) {
-		printf("slnet/tx%d: outq full (%d/%d)\n", sc->iid, qused, outq->size);
+		printf("slnet/tx%d: outq full (%d / %d)\n", sc->iid, qused, outq->size);
 		return (ENOBUFS);
 	}
 	
@@ -156,9 +216,7 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	*outq->tail = qtail + 1;	/* advance outq/tail */
 
 	printf("slnet/tx%d: slot %d, 0x%08x + %d\n", sc->iid, qtail, p, mlen);
-	for (int i = 0; i < 40; i += 4)
-		printf(" 0x%08x", *(uint32_t*)(i + (intptr_t)p));
-	printf("\n");
+	do_print_packet(p, mlen);
 	return (0);
 }
 
