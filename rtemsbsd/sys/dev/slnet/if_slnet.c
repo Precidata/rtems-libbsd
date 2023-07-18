@@ -58,6 +58,9 @@
 
 MALLOC_DEFINE(M_SLNET, "slnet", "Storage for mbuf bookkeeping");
 
+#define SNLET_BUFSIZE	  (8*1024)	/* must be power of two */
+#define SNLET_BUFMASK	  (SNLET_BUFSIZE - 1)
+
 #define SLNET_MAX_QLEN    64
 #define SLNET_BMSR_CAPS	(BMSR_10THDX | BMSR_10TFDX | BMSR_100TXHDX | BMSR_100TXFDX /* | BMSR_ANEG */)
 
@@ -73,10 +76,10 @@ struct slnet_softc {
 	int			  iid;
 	bios_virtual_eth 	 *veth;
 	bios_pkt_queue	 	 *outq;
-	int			  outsz;
-	struct mbuf		**outmtab;
 	bios_pkt_queue	 	 *inq;
-	int			  insz;
+	char *			 *obuf;
+	uint32_t		  ohead;
+	uint32_t		  otail;
 };
 
 static void
@@ -102,77 +105,81 @@ slnet_qflush(struct ifnet *ifp)
 {
 }
 
-static void
-slnet_cache_flush(uintptr_t begin, uintptr_t size)
+static int
+slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 {
-	uintptr_t end;
-	uintptr_t mask;
+	struct slnet_softc *sc = ifp->if_softc;
+	char	*p = NULL;
+	uint32_t ohead = sc->ohead;
+	uint32_t otail = sc->otail;
 
-	/* Align begin and end of the data to a cache line */
-	end = begin + size;
-	mask = CPU_CACHE_LINE_BYTES - 1;
-	begin &= ~mask;
-	end = (end + mask) & ~mask;
-	rtems_cache_flush_multiple_data_lines((void *)begin, end - begin);
+	int mlen = m_length(m, NULL);
+	if (mlen < sizeof(struct ether_header) + 20) {
+		printf("slnet/tx%d: mbuf too small (%d)\n", sc->iid, mlen);
+		return (ENOBUFS);
+	}
+	if (mlen > SNLET_BUFSIZE) {
+		printf("slnet/tx%d: mbuf too big (%d)\n", sc->iid, mlen);
+		return (ENOBUFS);
+	}
+	int oused = otail - ohead;
+	BSD_ASSERT(oused <= SNLET_BUFSIZE);
+	if (mlen > SNLET_BUFSIZE - oused) {
+		printf("slnet/tx%d: no space in obuf (%d > %d)\n", sc->iid, mlen, SNLET_BUFSIZE - oused);
+		return (ENOBUFS);
+	}
+	int ph = ohead & SNLET_BUFMASK;
+	int pt = otail & SNLET_BUFMASK;
+	if ((ph > pt) ||			/* one contiguous area in the middle */
+	    (SNLET_BUFSIZE - pt >= mlen))	/* enough space at end of split buffer */
+	{
+		p = sc->obuf + pt;
+		otail += mlen;
+	} else if (ph >= mlen) {		/* enough space at beginning of split buffer */
+		p = sc->obuf;
+		otail += (SNLET_BUFSIZE - pt);	/* skip past of end of split buffer */
+		otail += mlen;
+	} else {				/* no contigous area big enough available */
+		printf("slnet/tx%d: no contigous area in obuf (%d)\n", sc->iid, mlen);
+		return (ENOBUFS);
+	}
+	    	    
+	bios_virtual_eth *veth = sc->veth;
+	bios_pkt_queue *outq = sc->outq;
+	uint32_t qhead = *outq->head;
+	uint32_t qtail = *outq->tail;
+	uint32_t qused = qtail - qhead;
+	uint32_t qmask = outq->size - 1;
+	if (qused == outq->size) {
+		printf("slnet/tx%d: outq full (%d/%d)\n", sc->iid, qused, outq->size);
+		return (ENOBUFS);
+	}
+	
+	m_copydata(m, 0, mlen, p);
+	sc->otail = otail;		/* advance obuf/tail */
+	
+	outq->pkts[qtail & qmask].buf = p;
+	outq->pkts[qtail & qmask].size = mlen;
+	BIOS_DSB();
+	BIOS_ISB();
+	*outq->tail = qtail + 1;	/* advance outq/tail */
+
+	printf("slnet/tx%d: slot %d, 0x%08x + %d\n", sc->iid, qtail, p, mlen);
+	for (int i = 0; i < 40; i += 4)
+		printf(" 0x%08x", *(uint32_t*)(i + (intptr_t)p));
+	printf("\n");
+	return (0);
 }
 
 static int
-slnet_transmit(struct ifnet *ifp, struct mbuf *m0)
+slnet_transmit(struct ifnet *ifp, struct mbuf *m)
 {
-	struct slnet_softc *sc = ifp->if_softc;
-	
-	int tot = 0, nb = 0;
-	for (struct mbuf *m = m0; m != NULL; m = m->m_next) {
-		tot += m->m_len;
-		nb++;
-	}
-	if (nb > 1) {
-		/* try to combine mbufs */
-		m0 = m_pullup(m0, MIN(tot, MHLEN));
-		if (m0 == NULL) {
-			printf("slnet/tx: m_pullup => null\n");
-			if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
-			return (ENOBUFS);
-		}
-		nb = 0;
-		for (struct mbuf *m = m0; m != NULL; m = m->m_next)
-			nb++;
-		if (nb > 1) {
-			printf("slnet/tx: nb mbuf = %d\n", nb);
-			goto _enobufs;
-		}
-	}
-	bios_virtual_eth *veth = sc->veth;
-	bios_pkt_queue *outq = sc->outq;
-	if (outq->size != sc->outsz) {
-		printf("slnet/tx: outq size change: %d => %d\n", sc->outsz, outq->size);
-		goto _enobufs;
-	}
-	uint32_t head = *outq->head;
-	uint32_t tail = *outq->tail;
-	uint32_t used = tail - head;
-	uint32_t mask = sc->outsz - 1;
-	if (used == sc->outsz) {
-		printf("slnet/tx: outq full (%d/%d)\n", used, sc->outsz);
-		goto _enobufs;
-	}
-	slnet_cache_flush((intptr_t)m0->m_data, m0->m_len);
-	outq->pkts[tail & mask].buf = m0->m_data;
-	outq->pkts[tail & mask].size = m0->m_len;
-	sc->outmtab[tail & mask] = m0;
-	BIOS_DSB();
-	BIOS_ISB();
-	*outq->tail = tail + 1;
-	printf("slnet/tx (%d, n = %d/%d): slot %d, 0x%08x+%d\n", sc->iid, tot, MHLEN, tail, m0->m_data, m0->m_len);
-	for (int i = 0; i < 40; i += 4)
-	    printf(" 0x%08x", *(uint32_t*)(i + (intptr_t)m0->m_data));
-	printf("\n");
-	return (0);
-
-_enobufs:
-	m_freem(m0);
-	if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
-	return (ENOBUFS);
+	 int err;
+     
+	 err = slnet_do_transmit(ifp, m);
+	 m_freem(m);
+	 if (err)
+		 if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
 }
 
 static int
@@ -242,10 +249,10 @@ slnet_attach(device_t dev)
     
 	sc->veth = BIOS->veths + sc->iid;
 	sc->outq = sc->veth->outq;
-	sc->outsz = sc->outq->size;
-	sc->outmtab = mallocarray(sc->outsz, sizeof(struct mbuf *), M_SLNET, M_WAITOK|M_ZERO);
 	sc->inq = sc->veth->inq;
-	sc->insz = sc->inq->size;
+	sc->obuf = rtems_cache_coherent_allocate(SNLET_BUFSIZE, CPU_CACHE_LINE_BYTES, 0);
+	BSD_ASSERT(sc->obuf != NULL);
+	sc->ohead = sc->otail = 0;
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK, MTX_DEF);
 	callout_init_mtx(&sc->tick_callout, &sc->mtx, 0);
