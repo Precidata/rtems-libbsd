@@ -58,6 +58,13 @@
 
 #define SNLET_BUFSIZE	  (8*1024)	/* must be power of two */
 #define SNLET_BUFMASK	  (SNLET_BUFSIZE - 1)
+#define SLNET_DEBUG	  0
+
+#if SLNET_DEBUG
+#define SLNET_PRINTF	 printf
+#else
+#define SLNET_PRINTF
+#endif
 
 struct slnet_softc {
 	struct ifnet		 *ifp;
@@ -76,6 +83,7 @@ struct slnet_softc {
 
 static void
 do_print_packet(uint8_t *buf, size_t len) {
+#if SLNET_DEBUG
 	for (int i = 0; i < MIN(len, 42); i++) {
 		switch(i) {
 		case 0:
@@ -88,6 +96,7 @@ do_print_packet(uint8_t *buf, size_t len) {
 		printf("%02x", *(uint8_t*)(i + (intptr_t)buf));
 	}
 	printf("\n");
+#endif
 }
 
 static bool
@@ -110,7 +119,7 @@ slnet_do_receive(struct ifnet *ifp, struct slnet_softc *sc)
 		goto _advance;
 	}
 
-	printf("slnet/rx%d: slot %d, 0x%08x + %d\n", sc->iid, qhead, pkt->buf, pkt->size);
+	SLNET_PRINTF("slnet/rx%d: slot %d, 0x%08x + %d\n", sc->iid, qhead, pkt->buf, pkt->size);
 	do_print_packet(pkt->buf, pkt->size);
 
 	struct mbuf *m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
@@ -184,7 +193,7 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	if ((ph > pt) ||			/* one contiguous area in the middle */
 	    (SNLET_BUFSIZE - pt >= amlen))	/* enough space at end of split buffer */
 	{
-		printf("slnet/tx%d: A: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
+		SLNET_PRINTF("slnet/tx%d: A: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
 		p = sc->obuf + pt;
 		otail += amlen;
 	} else if (ph >= mlen) {		/* enough space at beginning of split buffer */
@@ -217,7 +226,7 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	BIOS_ISB();
 	*outq->tail = qtail + 1;	/* advance outq/tail */
 
-	printf("slnet/tx%d: slot %d, 0x%08x + %d\n", sc->iid, qtail, p, mlen);
+	SLNET_PRINTF("slnet/tx%d: slot %d, 0x%08x + %d\n", sc->iid, qtail, p, mlen);
 	do_print_packet(p, mlen);
 	return (0);
 }
@@ -239,7 +248,7 @@ slnet_do_reclaim(struct ifnet *ifp)
 		uint32_t ohead;
 		if (SNLET_BUFSIZE - ph >= amlen) {
 			ohead = sc->ohead + amlen;
-			printf("slnet/re%d: A: slot %d, 0x%08x + %d, head: %d => %d\n",
+			SLNET_PRINTF("slnet/re%d: A: slot %d, 0x%08x + %d, head: %d => %d\n",
 			    sc->iid, sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
 		} else {
 			ohead = sc->ohead + (SNLET_BUFSIZE - ph) + amlen;
