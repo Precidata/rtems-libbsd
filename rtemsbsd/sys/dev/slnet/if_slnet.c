@@ -60,7 +60,6 @@
 #define SNLET_BUFMASK	  (SNLET_BUFSIZE - 1)
 
 struct slnet_softc {
-	uint8_t			  mac_addr[6];
 	struct ifnet		 *ifp;
 	struct ifmedia		  media;		/* Media config (fake). */
 	struct mtx		  mtx;
@@ -249,8 +248,6 @@ slnet_attach(device_t dev)
 	mtx_init(&sc->mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK, MTX_DEF);
 	callout_init_mtx(&sc->tick_callout, &sc->mtx, 0);
 
-	rtems_bsd_get_mac_address(device_get_name(dev), sc->iid, &sc->mac_addr[0]);
-
 	/* Initialise pseudo media types. */
 	ifmedia_init(&sc->media, 0, slnet_media_change, slnet_media_status);
 	ifmedia_add(&sc->media, IFM_ETHER | IFM_100_TX, 0, NULL);
@@ -269,7 +266,7 @@ slnet_attach(device_t dev)
 	if_setsendqready(ifp);
 	ifp->if_baudrate = IF_Mbps(100);
     
-	ether_ifattach(ifp, &sc->mac_addr[0]);
+	ether_ifattach(ifp, sc->veth->mac);
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 	if_link_state_change(ifp, LINK_STATE_UP);
