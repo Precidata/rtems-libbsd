@@ -71,6 +71,7 @@ struct slnet_softc {
 	char			 *obuf;
 	uint32_t		  ohead;
 	uint32_t		  otail;
+	uint32_t		  reclaim;
 };
 
 static void
@@ -100,7 +101,6 @@ slnet_do_receive(struct ifnet *ifp, struct slnet_softc *sc)
 	uint32_t qsize = inq->size ;
 	uint32_t qmask = qsize - 1;
 	
-	printf("bios/rx%d: no packet\n");
 	if (qused <= 0)
 		return (false);
 	BSD_ASSERT(qused <= qsize);
@@ -136,7 +136,7 @@ slnet_tick(void *arg)
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
-	callout_reset(&sc->tick_callout, hz, slnet_tick, sc);
+	callout_reset(&sc->tick_callout, hz/10, slnet_tick, sc);
 	while(slnet_do_receive(ifp, sc))
 	    ;
 }
@@ -147,7 +147,7 @@ slnet_init(void *arg)
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
-	callout_reset(&sc->tick_callout, hz, slnet_tick, sc);
+	callout_reset(&sc->tick_callout, hz/10, slnet_tick, sc);
 }
 
 static void
@@ -222,11 +222,41 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	return (0);
 }
 
+static void
+slnet_do_reclaim(struct ifnet *ifp)
+{
+	struct slnet_softc *sc = ifp->if_softc;
+	bios_virtual_eth *veth = sc->veth;
+	bios_pkt_queue *outq = sc->outq;
+	uint32_t qhead = *outq->head;
+	uint32_t qmask = outq->size - 1;
+
+	while (sc->reclaim != qhead) {
+		bios_pkt_entry *pkt = outq->pkts + (sc->reclaim & qmask);
+		unsigned mlen = pkt->size;
+		unsigned amlen = (mlen + 3) & ~3;
+		unsigned ph = sc->ohead & SNLET_BUFMASK;
+		uint32_t ohead;
+		if (SNLET_BUFSIZE - ph >= amlen) {
+			ohead = sc->ohead + amlen;
+			printf("slnet/re%d: A: slot %d, 0x%08x + %d, head: %d => %d\n",
+			    sc->iid, sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
+		} else {
+			ohead = sc->ohead + (SNLET_BUFSIZE - ph) + amlen;
+			printf("slnet/re%d: B: slot %d, 0x%08x + %d, head: %d => %d\n",
+			    sc->iid, sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
+		}
+		sc->ohead = ohead;
+		sc->reclaim++;
+	}
+}
+
 static int
 slnet_transmit(struct ifnet *ifp, struct mbuf *m)
 {
 	 int err;
      
+	 slnet_do_reclaim(ifp);
 	 err = slnet_do_transmit(ifp, m);
 	 m_freem(m);
 	 if (err)
@@ -304,6 +334,7 @@ slnet_attach(device_t dev)
 	sc->obuf = rtems_cache_coherent_allocate(SNLET_BUFSIZE, CPU_CACHE_LINE_BYTES, 0);
 	BSD_ASSERT(sc->obuf != NULL);
 	sc->ohead = sc->otail = 0;
+	sc->reclaim = *sc->outq->tail;
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK, MTX_DEF);
 	callout_init_mtx(&sc->tick_callout, &sc->mtx, 0);
