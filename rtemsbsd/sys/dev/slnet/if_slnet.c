@@ -56,16 +56,8 @@
 
 #include <bios_core.h>
 
-MALLOC_DEFINE(M_SLNET, "slnet", "Storage for mbuf bookkeeping");
-
 #define SNLET_BUFSIZE	  (8*1024)	/* must be power of two */
 #define SNLET_BUFMASK	  (SNLET_BUFSIZE - 1)
-
-#define SLNET_MAX_QLEN    64
-#define SLNET_BMSR_CAPS	(BMSR_10THDX | BMSR_10TFDX | BMSR_100TXHDX | BMSR_100TXFDX /* | BMSR_ANEG */)
-
-#define	SLNET_LOCK(sc) mtx_lock(&(sc)->mtx)
-#define	SLNET_UNLOCK(sc) mtx_unlock(&(sc)->mtx)
 
 struct slnet_softc {
 	uint8_t			  mac_addr[6];
@@ -273,7 +265,7 @@ slnet_attach(device_t dev)
 	ifp->if_qflush = slnet_qflush;
 	ifp->if_ioctl = slnet_ioctl;
 	ifp->if_init  = slnet_init;
-	if_setsendqlen(ifp, ifqmaxlen);
+	if_setsendqlen(ifp, sc->outq->size);
 	if_setsendqready(ifp);
 	ifp->if_baudrate = IF_Mbps(100);
     
