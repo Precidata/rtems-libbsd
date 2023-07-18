@@ -68,7 +68,7 @@ struct slnet_softc {
 	bios_virtual_eth 	 *veth;
 	bios_pkt_queue	 	 *outq;
 	bios_pkt_queue	 	 *inq;
-	char *			 *obuf;
+	char			 *obuf;
 	uint32_t		  ohead;
 	uint32_t		  otail;
 };
@@ -184,9 +184,11 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	if ((ph > pt) ||			/* one contiguous area in the middle */
 	    (SNLET_BUFSIZE - pt >= amlen))	/* enough space at end of split buffer */
 	{
+		printf("slnet/tx%d: A: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
 		p = sc->obuf + pt;
 		otail += amlen;
 	} else if (ph >= mlen) {		/* enough space at beginning of split buffer */
+		printf("slnet/tx%d: B: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
 		p = sc->obuf;
 		otail += (SNLET_BUFSIZE - pt);	/* skip past of end of split buffer */
 		otail += amlen;
