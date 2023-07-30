@@ -5527,6 +5527,55 @@ class regulator(builder.Module):
         )
 
 #
+# /usr/bin/qjs
+#
+class usr_bin_qjs(builder.Module):
+
+    def __init__(self, manager):
+        super(usr_bin_qjs, self).__init__(manager, type(self).__name__)
+
+    def generate(self):
+        mm = self.manager
+        self.addUserSpaceHeaderFiles(
+            [
+                'contrib/quickjs/cutils.h',
+                'contrib/quickjs/libf.h',
+                'contrib/quickjs/libregexp-opcode.h',
+                'contrib/quickjs/libregexp.h',
+                'contrib/quickjs/libunicode-table.h',
+                'contrib/quickjs/libunicode.h',
+                'contrib/quickjs/list.h',
+                'contrib/quickjs/quickjs-atom.h',
+                'contrib/quickjs/quickjs-libc.h',
+                'contrib/quickjs/quickjs-opcode.h',
+                'contrib/quickjs/quickjs.h',
+                'contrib/quickjs/quickjscmds-config.h',
+            ]
+        )
+        self.addUserSpaceSourceFiles(
+            [
+                'contrib/quickjs/cutils.c',
+                'contrib/quickjs/libbf.c',
+                'contrib/quickjs/libregexp.c',
+                'contrib/quickjs/libunicode.c',
+                'contrib/quickjs/qjs.c',
+                'contrib/quickjs/qjscalc.c',
+                'contrib/quickjs/quickjs-libc.c',
+                'contrib/quickjs/quickjs.c',
+                'contrib/quickjs/repl.c'
+            ],
+            mm.generator['source'](['-D__FreeBSD__=1', '-DCONFIG_BIGNUM', '-DCONFIG_VERSION=\"2021-03-07\"', '-D_GNU_SOURCE'],
+                                   ['freebsd/contrib/quickjs']
+            )
+        )
+        self.addRTEMSUserSourceFiles(
+            [
+                'rtems/rtems-quickjs-shell-qjs.c',
+            ],
+            mm.generator['source']()
+        )
+
+#
 # Tests
 #
 #  Note: Keep as the last module
@@ -5714,6 +5763,8 @@ def load(mm):
     mm.addModule(usr_sbin_wpa_supplicant(mm))
     mm.addModule(crypto_openssl(mm))
     mm.addModule(usr_bin_openssl(mm))
+
+    mm.addModule(usr_bin_qjs(mm))
 
     mm.addModule(dhcpcd(mm))
     mm.addModule(mdnsresponder(mm))
