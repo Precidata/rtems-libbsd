@@ -216,6 +216,7 @@ early_initialization(void)
 #include <bsp/irq-info.h>
 
 #include <rtems/netcmds-config.h>
+#include <rtems/quickjscmds-config.h>
 
 #ifdef RTEMS_BSD_MODULE_USR_SBIN_WPA_SUPPLICANT
   #define SHELL_WPA_SUPPLICANT_COMMANDS \
@@ -246,6 +247,7 @@ early_initialization(void)
   &rtems_shell_IFCONFIG_Command, \
   &rtems_shell_IFMCSTAT_Command, \
   &rtems_shell_VMSTAT_Command, \
+  &rtems_shell_QJS_Command, \
   &shell_PATTERN_Command
 
 #define CONFIGURE_SHELL_COMMAND_CPUINFO
