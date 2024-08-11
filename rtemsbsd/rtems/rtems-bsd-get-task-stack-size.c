@@ -42,5 +42,5 @@
 size_t
 rtems_bsd_get_task_stack_size(const char *name)
 {
-	return 32 * 1024;
+	return 8 * 1024;
 }
