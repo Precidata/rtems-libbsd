@@ -199,6 +199,18 @@ SYSINIT_DRIVER_REFERENCE(ukphy, miibus);
 
 #endif
 
+#if defined(STM32H7_SLAVE_BSP)
+
+RTEMS_BSD_DEFINE_NEXUS_DEVICE(slnet, 0, 0, NULL);
+
+#if !defined(STM32H7_SLAVE_BSP_HW_ETH)
+
+RTEMS_BSD_DEFINE_NEXUS_DEVICE(slnet, 1, 0, NULL);
+
+#endif
+
+#endif /* STM32H7_SLAVE_BSP */
+
 #if !defined(STM32H7_SLAVE_BSP)
 
 static const rtems_bsd_device_resource dwcotg_res[] = {
@@ -220,13 +232,6 @@ RTEMS_BSD_DRIVER_USB;
 RTEMS_BSD_DRIVER_USB_MASS;
 
 #endif /* ! STM32H7_SLAVE_BSP */
-
-#if defined(STM32H7_SLAVE_BSP)
-
-RTEMS_BSD_DEFINE_NEXUS_DEVICE(slnet, 0, 0, NULL);
-RTEMS_BSD_DEFINE_NEXUS_DEVICE(slnet, 1, 0, NULL);
-
-#endif /* STM32H7_SLAVE_BSP */
 
 #elif defined(LIBBSP_I386_PC386_BSP_H)
 
