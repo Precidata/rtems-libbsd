@@ -50,6 +50,8 @@
 #include <net/if_types.h>
 #include <net/if_var.h>
 
+#include <net/bpf.h>
+
 #include <machine/bus.h>
 
 #include <dev/mii/mii.h>
@@ -115,9 +117,9 @@ stmac_new_mbuf(struct ifnet *ifp)
 
 	m = m_getcl(M_NOWAIT, MT_DATA, M_PKTHDR);
 	if (m != NULL) {
+		rtems_cache_invalidate_multiple_data_lines(m->m_ext.ext_buf, m->m_ext.ext_size);
 		m->m_data = mtod(m, char *) + ETHER_ALIGN;
 		m->m_pkthdr.rcvif = ifp;
-		rtems_cache_invalidate_multiple_data_lines(m->m_data, m->m_len);
 	}
 
 	return m;
@@ -793,6 +795,8 @@ stmac_tx_enqueue(struct stmac_softc *sc, struct ifnet *ifp, struct mbuf *m)
 	_ARM_Data_synchronization_barrier();
 	regs = sc->heth.Instance;
 	WRITE_REG(regs->DMACTDTPR, (uint32_t)&desc_ring[new_head_idx]);
+
+	ETHER_BPF_MTAP(sc->ifp, m);
 	return (0);
 }
 
