@@ -70,7 +70,6 @@ struct slnet_softc {
 	struct ifnet		 *ifp;
 	struct ifmedia		  media;		/* Media config (fake). */
 	struct mtx		  mtx;
-	struct callout		  tick_callout;
 	int			  iid;
 	bios_virtual_eth 	 *veth;
 	bios_pkt_queue	 	 *outq;
@@ -140,12 +139,11 @@ _advance:
 }
 
 static void
-slnet_tick(void *arg)
+slnet_interrupt(void *arg)
 {
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
 
-	callout_reset(&sc->tick_callout, 1, slnet_tick, sc);
 	while(slnet_do_receive(ifp, sc))
 	    ;
 }
@@ -155,8 +153,6 @@ slnet_init(void *arg)
 {
 	struct slnet_softc *sc = arg;
 	struct ifnet *ifp = sc->ifp;
-
-	callout_reset(&sc->tick_callout, 1, slnet_tick, sc);
 }
 
 static void
@@ -197,7 +193,7 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 		p = sc->obuf + pt;
 		otail += amlen;
 	} else if (ph >= mlen) {		/* enough space at beginning of split buffer */
-		printf("slnet/tx%d: B: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
+		SLNET_PRINTF("slnet/tx%d: B: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
 		p = sc->obuf;
 		otail += (SNLET_BUFSIZE - pt);	/* skip past of end of split buffer */
 		otail += amlen;
@@ -252,7 +248,7 @@ slnet_do_reclaim(struct ifnet *ifp)
 			    sc->iid, sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
 		} else {
 			ohead = sc->ohead + (SNLET_BUFSIZE - ph) + amlen;
-			printf("slnet/re%d: B: slot %d, 0x%08x + %d, head: %d => %d\n",
+			SLNET_PRINTF("slnet/re%d: B: slot %d, 0x%08x + %d, head: %d => %d\n",
 			    sc->iid, sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
 		}
 		sc->ohead = ohead;
@@ -331,6 +327,7 @@ slnet_attach(device_t dev)
 	struct slnet_softc *sc;
 	struct ifnet *ifp;
 	int error, caps;
+	rtems_status_code status;
 
 	sc = device_get_softc(dev);
 	sc->ifp = ifp = if_alloc(IFT_ETHER);
@@ -346,7 +343,6 @@ slnet_attach(device_t dev)
 	sc->reclaim = *sc->outq->tail;
 
 	mtx_init(&sc->mtx, device_get_nameunit(dev), MTX_NETWORK_LOCK, MTX_DEF);
-	callout_init_mtx(&sc->tick_callout, &sc->mtx, 0);
 
 	/* Initialise pseudo media types. */
 	ifmedia_init(&sc->media, 0, slnet_media_change, slnet_media_status);
@@ -370,6 +366,11 @@ slnet_attach(device_t dev)
 
 	ifp->if_drv_flags |= IFF_DRV_RUNNING;
 	if_link_state_change(ifp, LINK_STATE_UP);
+
+
+	status = stm32h7_hsem_add_server_handler(sc->veth->hsem,
+	    slnet_interrupt, sc, RTEMS_INTERRUPT_SERVER_DEFAULT);
+	BSD_ASSERT(status == RTEMS_SUCCESSFUL);
 
 	return (0);
 }
