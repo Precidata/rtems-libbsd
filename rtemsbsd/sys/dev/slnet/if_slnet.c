@@ -56,8 +56,13 @@
 
 #include <bios_core.h>
 
-#define SNLET_BUFSIZE (8 * 1024) /* must be power of two */
-#define SNLET_BUFMASK (SNLET_BUFSIZE - 1)
+/*
+ * TX buffer must be power of two. The sum must fit in SRAM3 (32k)
+ *  - Allocate 4k for the debug USB-C interface eth0
+ *  - Allocate 16k for the real interface eth1 (>9k for NFSv2)
+ */
+#define SNLET_BUFSIZE(iid) (iid ? 16 * 1024 : 4 * 1024)
+#define SNLET_BUFMASK(iid) (SNLET_BUFSIZE(iid) - 1)
 #define SLNET_DEBUG 0
 
 #if SLNET_DEBUG
@@ -168,6 +173,8 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
     char *p = NULL;
     uint32_t ohead = sc->ohead;
     uint32_t otail = sc->otail;
+    uint32_t bufsize = SNLET_BUFSIZE(sc->iid);
+    uint32_t bufmask = SNLET_BUFMASK(sc->iid);
 
     unsigned mlen = m_length(m, NULL);
     unsigned amlen = (mlen + 3) & ~3;
@@ -175,28 +182,28 @@ slnet_do_transmit(struct ifnet *ifp, struct mbuf *m)
 	printf("slnet/tx%d: mbuf too small (%d)\n", sc->iid, mlen);
 	return (ENOBUFS);
     }
-    if (mlen > SNLET_BUFSIZE) {
+    if (mlen > bufsize) {
 	printf("slnet/tx%d: mbuf too big (%d)\n", sc->iid, mlen);
 	return (ENOBUFS);
     }
     unsigned oused = otail - ohead;
-    BSD_ASSERT(oused <= SNLET_BUFSIZE);
-    if (amlen > SNLET_BUFSIZE - oused) {
-	printf("slnet/tx%d: no space in obuf (%d > %d)\n", sc->iid, mlen, SNLET_BUFSIZE - oused);
+    BSD_ASSERT(oused <= bufsize);
+    if (amlen > bufsize - oused) {
+	printf("slnet/tx%d: no space in obuf (%d > %d)\n", sc->iid, mlen, bufsize - oused);
 	return (ENOBUFS);
     }
-    unsigned ph = ohead & SNLET_BUFMASK;
-    unsigned pt = otail & SNLET_BUFMASK;
-    if ((ph > pt) ||		       /* one contiguous area in the middle */
-	(SNLET_BUFSIZE - pt >= amlen)) /* enough space at end of split buffer */
+    unsigned ph = ohead & bufmask;
+    unsigned pt = otail & bufmask;
+    if ((ph > pt) ||		 /* one contiguous area in the middle */
+	(bufsize - pt >= amlen)) /* enough space at end of split buffer */
     {
-	SLNET_PRINTF("slnet/tx%d: A: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
+	SLNET_PRINTF("slnet/tx%d: A: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, bufsize - pt);
 	p = sc->obuf + pt;
 	otail += amlen;
     } else if (ph >= mlen) { /* enough space at beginning of split buffer */
-	SLNET_PRINTF("slnet/tx%d: B: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, SNLET_BUFSIZE - pt);
+	SLNET_PRINTF("slnet/tx%d: B: ph=%d pt=%d bs-pt=%d\n", sc->iid, ph, pt, bufsize - pt);
 	p = sc->obuf;
-	otail += (SNLET_BUFSIZE - pt); /* skip past of end of split buffer */
+	otail += (bufsize - pt); /* skip past of end of split buffer */
 	otail += amlen;
     } else { /* no contigous area big enough available */
 	printf("slnet/tx%d: no contigous area in obuf (%d)\n", sc->iid, mlen);
@@ -236,19 +243,21 @@ slnet_do_reclaim(struct ifnet *ifp)
     bios_pkt_queue *outq = sc->outq;
     uint32_t qhead = *outq->head;
     uint32_t qmask = outq->size - 1;
+    uint32_t bufsize = SNLET_BUFSIZE(sc->iid);
+    uint32_t bufmask = SNLET_BUFMASK(sc->iid);
 
     while (sc->reclaim != qhead) {
 	bios_pkt_entry *pkt = outq->pkts + (sc->reclaim & qmask);
 	unsigned mlen = pkt->size;
 	unsigned amlen = (mlen + 3) & ~3;
-	unsigned ph = sc->ohead & SNLET_BUFMASK;
+	unsigned ph = sc->ohead & bufmask;
 	uint32_t ohead;
-	if (SNLET_BUFSIZE - ph >= amlen) {
+	if (bufsize - ph >= amlen) {
 	    ohead = sc->ohead + amlen;
 	    SLNET_PRINTF("slnet/re%d: A: slot %d, 0x%08x + %d, head: %d => %d\n", sc->iid,
 		sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
 	} else {
-	    ohead = sc->ohead + (SNLET_BUFSIZE - ph) + amlen;
+	    ohead = sc->ohead + (bufsize - ph) + amlen;
 	    SLNET_PRINTF("slnet/re%d: B: slot %d, 0x%08x + %d, head: %d => %d\n", sc->iid,
 		sc->reclaim, pkt->buf, pkt->size, sc->ohead, ohead);
 	}
@@ -267,6 +276,7 @@ slnet_transmit(struct ifnet *ifp, struct mbuf *m)
     m_freem(m);
     if (err)
 	if_inc_counter(ifp, IFCOUNTER_OQDROPS, 1);
+    return (err);
 }
 
 static int
@@ -338,7 +348,7 @@ slnet_attach(device_t dev)
     sc->veth = BIOS->veths + sc->iid;
     sc->outq = sc->veth->outq;
     sc->inq = sc->veth->inq;
-    sc->obuf = rtems_cache_coherent_allocate(SNLET_BUFSIZE, CPU_CACHE_LINE_BYTES, 0);
+    sc->obuf = rtems_cache_coherent_allocate(SNLET_BUFSIZE(sc->iid), CPU_CACHE_LINE_BYTES, 0);
     BSD_ASSERT(sc->obuf != NULL);
     sc->ohead = sc->otail = 0;
     sc->reclaim = *sc->outq->tail;
